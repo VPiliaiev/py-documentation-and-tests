@@ -186,7 +186,12 @@ class MovieSessionViewSet(viewsets.ModelViewSet):
                 type={"type": "string", "format": "date"},
                 description="Filter by date"
                             " in movie session (ex. ?date=2000-04-01)",
-            )
+            ),
+            OpenApiParameter(
+                "movie",
+                type=int,
+                description="Filter by movie id (ex. ?movie=1')",
+            ),
         ]
     )
     def list(self, request, *args, **kwargs):

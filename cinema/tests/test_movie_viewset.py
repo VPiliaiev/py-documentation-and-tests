@@ -8,9 +8,17 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from cinema.models import Movie, Genre, Actor
 from cinema.serializers import MovieListSerializer, MovieDetailSerializer
+from PIL import Image
+import tempfile
+import os
+
 
 MOVIE_URL = reverse("cinema:movie-list")
-MOVIE_SESSION_URL = reverse("cinema:moviesession-list")
+
+
+def image_upload_url(movie_id):
+    """Return URL for recipe image upload"""
+    return reverse("cinema:movie-upload-image", args=[movie_id])
 
 
 def detail_url(movie_id):  # http://127.0.0.1:8000/api/cinema/movies/<movie_id>/
@@ -52,6 +60,17 @@ class UnauthenticatedMovieApiTests(TestCase):
         res = self.client.get(MOVIE_URL)
         self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_upload_image_unauthorized(self):
+        movie = sample_movie()
+        url = image_upload_url(movie.id)
+        client = APIClient()
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as ntf:
+            img = Image.new("RGB", (10, 10))
+            img.save(ntf, format="JPEG")
+            ntf.seek(0)
+            res = client.post(url, {"image": ntf}, format="multipart")
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
 
 class AuthenticatedMovieApiTests(TestCase):
     def setUp(self):
@@ -60,7 +79,9 @@ class AuthenticatedMovieApiTests(TestCase):
             email="test@gmail.com",
             password="Test12345"
         )
-        self.client.force_authenticate(self.user)
+        token = AccessToken.for_user(self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.movie = sample_movie()
 
     def test_movies_list(self):
         genre = sample_genre()
@@ -146,6 +167,16 @@ class AuthenticatedMovieApiTests(TestCase):
 
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_upload_image_forbidden(self):
+        url = image_upload_url(self.movie.id)
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as ntf:
+            img = Image.new("RGB", (10, 10))
+            img.save(ntf, format="JPEG")
+            ntf.seek(0)
+            res = self.client.post(url, {"image": ntf}, format="multipart")
+
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
 
 class AdminMovieTests(TestCase):
     def setUp(self):
@@ -157,6 +188,7 @@ class AdminMovieTests(TestCase):
         )
         token = AccessToken.for_user(self.user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.movie = sample_movie()
 
     def test_create_movie(self):
         genre = Genre.objects.create(name="Action")
@@ -186,3 +218,24 @@ class AdminMovieTests(TestCase):
         res = self.client.delete(url)
 
         self.assertEqual(res.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_upload_image_to_movie(self):
+        """Test uploading an image to movie"""
+        url = image_upload_url(self.movie.id)
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as ntf:
+            img = Image.new("RGB", (10, 10))
+            img.save(ntf, format="JPEG")
+            ntf.seek(0)
+            res = self.client.post(url, {"image": ntf}, format="multipart")
+
+        self.movie.refresh_from_db()
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("image", res.data)
+        self.assertTrue(os.path.exists(self.movie.image.path))
+
+    def test_upload_image_invalid(self):
+        url = image_upload_url(self.movie.id)
+        res = self.client.post(url, {"image": "not-a-file"}, format="multipart")
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
